@@ -2,52 +2,164 @@
 <html>
   <head>
     <meta charset="UTF-8">
-    <title>360° Panorama Uploader & Viewer</title>
+    <title>360° Virtual Tour Creator</title>
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <style>
       body { 
         margin: 0; 
         font-family: Arial, sans-serif;
       }
-      .upload-container {
+      .editor-panel {
         position: fixed;
         top: 20px;
         left: 20px;
         z-index: 1000;
-        background: rgba(255, 255, 255, 0.8);
+        background: rgba(255, 255, 255, 0.9);
         padding: 15px;
         border-radius: 8px;
+        max-width: 300px;
       }
-      #fileInput {
-        margin-bottom: 10px;
+      .editor-panel.hidden {
+        display: none;
+      }
+      .hotspot {
+        cursor: pointer;
+      }
+      #fileInput, button {
+        margin: 5px 0;
+        padding: 5px;
+      }
+      #tourData {
+        display: none;
       }
     </style>
   </head>
   <body>
-    <div class="upload-container">
+    <div id="editorPanel" class="editor-panel">
+      <h3>Tour Editor</h3>
       <input type="file" id="fileInput" accept="image/*">
-      <button onclick="loadPanorama()">Load Panorama</button>
+      <button onclick="addPanorama()">Add Panorama</button>
+      <button onclick="addHotspot()">Add Hotspot</button>
+      <select id="hotspotTarget"></select>
+      <button onclick="finalizeTour()">Finalize Tour</button>
+      <button onclick="toggleEditMode()">Toggle Edit Mode</button>
     </div>
-    
+
     <a-scene>
-      <a-sky id="panorama" rotation="0 -90 0"></a-sky>
-      <a-camera look-controls="reverseMouseDrag: true"></a-camera>
+      <a-assets id="assets">
+      </a-assets>
+      
+      <a-sky id="panorama"></a-sky>
+      <a-camera look-controls="reverseMouseDrag: true">
+        <a-cursor color="#FF0000"></a-cursor>
+      </a-camera>
     </a-scene>
 
     <script>
-      function loadPanorama() {
-        const fileInput = document.getElementById('fileInput');
-        const file = fileInput.files[0];
+      let panoramas = {};
+      let currentPanorama = null;
+      let editMode = true;
+      
+      function addPanorama() {
+        const file = document.getElementById('fileInput').files[0];
+        if (!file) return;
         
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            document.getElementById('panorama').setAttribute('src', e.target.result);
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const id = 'pano_' + Object.keys(panoramas).length;
+          panoramas[id] = {
+            src: e.target.result,
+            hotspots: []
           };
-          reader.readAsDataURL(file);
-        } else {
-          alert('Please select a file first!');
-        }
+          
+          updateHotspotTargets();
+          if (!currentPanorama) loadPanorama(id);
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function loadPanorama(id) {
+        currentPanorama = id;
+        document.getElementById('panorama').setAttribute('src', panoramas[id].src);
+        clearHotspots();
+        renderHotspots(id);
+      }
+
+      function addHotspot() {
+        if (!currentPanorama) return;
+        
+        const target = document.getElementById('hotspotTarget').value;
+        const camera = document.querySelector('a-camera');
+        const rotation = camera.getAttribute('rotation');
+        
+        const hotspot = {
+          position: calculateHotspotPosition(rotation),
+          target: target
+        };
+        
+        panoramas[currentPanorama].hotspots.push(hotspot);
+        renderHotspots(currentPanorama);
+      }
+
+      function calculateHotspotPosition(rotation) {
+        const phi = (90 - rotation.x) * (Math.PI / 180);
+        const theta = (rotation.y + 90) * (Math.PI / 180);
+        
+        const x = -10 * Math.sin(phi) * Math.cos(theta);
+        const y = 10 * Math.cos(phi);
+        const z = -10 * Math.sin(phi) * Math.sin(theta);
+        
+        return {x, y, z};
+      }
+
+      function clearHotspots() {
+        const scene = document.querySelector('a-scene');
+        const hotspots = document.querySelectorAll('.hotspot');
+        hotspots.forEach(h => scene.removeChild(h));
+      }
+
+      function renderHotspots(panoId) {
+        const scene = document.querySelector('a-scene');
+        panoramas[panoId].hotspots.forEach(hotspot => {
+          const entity = document.createElement('a-sphere');
+          entity.classList.add('hotspot');
+          entity.setAttribute('position', hotspot.position);
+          entity.setAttribute('radius', '0.3');
+          entity.setAttribute('color', '#FF0000');
+          entity.setAttribute('onclick', `loadPanorama('${hotspot.target}')`);
+          scene.appendChild(entity);
+        });
+      }
+
+      function updateHotspotTargets() {
+        const select = document.getElementById('hotspotTarget');
+        select.innerHTML = '';
+        Object.keys(panoramas).forEach(id => {
+          if (id !== currentPanorama) {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id;
+            select.appendChild(option);
+          }
+        });
+      }
+
+      function toggleEditMode() {
+        editMode = !editMode;
+        document.getElementById('editorPanel').classList.toggle('hidden');
+      }
+
+      function finalizeTour() {
+        const tourData = JSON.stringify(panoramas);
+        const blob = new Blob([tourData], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'virtual_tour.json';
+        a.click();
+        
+        toggleEditMode();
       }
     </script>
   </body>
