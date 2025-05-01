@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>360° Panorama Uploader & Viewer</title>
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <style>
+      body { 
+        margin: 0; 
+        font-family: Arial, sans-serif;
+      }
+      .upload-container {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        z-index: 1000;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 15px;
+        border-radius: 8px;
+      }
+      #fileInput {
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="upload-container">
+      <input type="file" id="fileInput" accept="image/*">
+      <button onclick="loadPanorama()">Load Panorama</button>
+    </div>
+    
+    <a-scene>
+      <a-sky id="panorama" rotation="0 -90 0"></a-sky>
+      <a-camera look-controls="reverseMouseDrag: true"></a-camera>
+    </a-scene>
+
+    <script>
+      function loadPanorama() {
+        const fileInput = document.getElementById('fileInput');
+        const file = fileInput.files[0];
+        
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            document.getElementById('panorama').setAttribute('src', e.target.result);
+          };
+          reader.readAsDataURL(file);
+        } else {
+          alert('Please select a file first!');
+        }
+      }
+    </script>
+  </body>
+</html>
