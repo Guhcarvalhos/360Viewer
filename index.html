@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>360° Virtual Tour Creator</title>
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <style>
-      body { 
-        margin: 0; 
+      body {
+        margin: 0;
         font-family: Arial, sans-serif;
       }
+
       .editor-panel {
         position: fixed;
         top: 20px;
@@ -17,39 +18,73 @@
         background: rgba(255, 255, 255, 0.9);
         padding: 15px;
         border-radius: 8px;
-        max-width: 300px;
+        max-width: 320px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
       }
-      .editor-panel.hidden {
+
+      /* Em "view-mode", escondemos só o que é edit-only (não o painel todo) */
+      .editor-panel.view-mode .edit-only {
         display: none;
       }
+
       .hotspot {
         cursor: pointer;
       }
-      #fileInput, button {
-        margin: 5px 0;
-        padding: 5px;
+
+      #fileInput,
+      button,
+      select {
+        margin: 6px 0;
+        padding: 6px;
+        width: 100%;
+        box-sizing: border-box;
       }
-      #tourData {
-        display: none;
+
+      select {
+        padding: 7px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .hint {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-top: 8px;
       }
     </style>
   </head>
+
   <body>
     <div id="editorPanel" class="editor-panel">
-      <h3>Tour Editor</h3>
-      <input type="file" id="fileInput" accept="image/*">
-      <button onclick="addPanorama()">Add Panorama</button>
-      <button onclick="addHotspot()">Add Hotspot</button>
-      <select id="hotspotTarget"></select>
-      <button onclick="finalizeTour()">Finalize Tour</button>
-      <button onclick="toggleEditMode()">Toggle Edit Mode</button>
+      <h3 style="margin: 0 0 10px 0;">Tour Editor</h3>
+
+      <!-- Sempre visíveis -->
+      <input type="file" id="fileInput" accept="image/*" class="always-visible" />
+      <button onclick="addPanorama()" class="always-visible">Add Panorama</button>
+
+      <button onclick="addHotspot()" class="always-visible">Add Hotspot</button>
+      <select id="hotspotTarget" class="always-visible"></select>
+
+      <!-- Só no modo edição (mas o painel e os widgets principais continuam sempre visíveis) -->
+      <button onclick="finalizeTour()" class="edit-only">Finalize Tour</button>
+
+      <!-- Sempre visível -->
+      <button onclick="toggleEditMode()" class="always-visible">Toggle Edit Mode</button>
+
+      <div class="hint">
+        Dica: adicione pelo menos 2 panoramas para ter alvo no dropdown do hotspot.
+      </div>
     </div>
 
     <a-scene>
-      <a-assets id="assets">
-      </a-assets>
-      
+      <a-assets id="assets"></a-assets>
+
       <a-sky id="panorama"></a-sky>
+
       <a-camera look-controls="reverseMouseDrag: true">
         <a-cursor color="#FF0000"></a-cursor>
       </a-camera>
@@ -59,108 +94,178 @@
       let panoramas = {};
       let currentPanorama = null;
       let editMode = true;
-      
+
       function addPanorama() {
-        const file = document.getElementById('fileInput').files[0];
+        // (Opcional) bloquear fora do modo edição, mas mantém widgets visíveis
+        // Se quiser permitir adicionar sempre, remova a linha abaixo.
+        if (!editMode) return;
+
+        const file = document.getElementById("fileInput").files[0];
         if (!file) return;
-        
+
         const reader = new FileReader();
-        reader.onload = function(e) {
-          const id = 'pano_' + Object.keys(panoramas).length;
+        reader.onload = function (e) {
+          const id = "pano_" + Object.keys(panoramas).length;
+
           panoramas[id] = {
             src: e.target.result,
-            hotspots: []
+            hotspots: [],
           };
-          
+
+          // Atualiza lista de alvos para hotspots
           updateHotspotTargets();
+
+          // Se for o primeiro panorama, carrega automaticamente
           if (!currentPanorama) loadPanorama(id);
+
+          // Limpa o input para permitir reupload do mesmo ficheiro se necessário
+          document.getElementById("fileInput").value = "";
         };
+
         reader.readAsDataURL(file);
       }
 
       function loadPanorama(id) {
+        if (!panoramas[id]) return;
+
         currentPanorama = id;
-        document.getElementById('panorama').setAttribute('src', panoramas[id].src);
+        document.getElementById("panorama").setAttribute("src", panoramas[id].src);
+
         clearHotspots();
         renderHotspots(id);
+
+        // IMPORTANTÍSSIMO: manter o dropdown atualizado ao trocar de panorama
+        updateHotspotTargets();
       }
 
       function addHotspot() {
+        // (Opcional) bloquear fora do modo edição, mas mantém widgets visíveis
+        // Se quiser permitir hotspots sempre, remova a linha abaixo.
+        if (!editMode) return;
+
         if (!currentPanorama) return;
-        
-        const target = document.getElementById('hotspotTarget').value;
-        const camera = document.querySelector('a-camera');
-        const rotation = camera.getAttribute('rotation');
-        
+
+        const target = document.getElementById("hotspotTarget").value;
+        if (!target) return;
+
+        const camera = document.querySelector("a-camera");
+        const rotation = camera.getAttribute("rotation");
+
         const hotspot = {
           position: calculateHotspotPosition(rotation),
-          target: target
+          target: target,
         };
-        
+
         panoramas[currentPanorama].hotspots.push(hotspot);
+
+        // Re-renderiza hotspots do panorama atual
+        clearHotspots();
         renderHotspots(currentPanorama);
       }
 
       function calculateHotspotPosition(rotation) {
         const phi = (90 - rotation.x) * (Math.PI / 180);
         const theta = (rotation.y + 90) * (Math.PI / 180);
-        
+
         const x = -10 * Math.sin(phi) * Math.cos(theta);
         const y = 10 * Math.cos(phi);
         const z = -10 * Math.sin(phi) * Math.sin(theta);
-        
-        return {x, y, z};
+
+        return { x, y, z };
       }
 
       function clearHotspots() {
-        const scene = document.querySelector('a-scene');
-        const hotspots = document.querySelectorAll('.hotspot');
-        hotspots.forEach(h => scene.removeChild(h));
+        const scene = document.querySelector("a-scene");
+        const hotspots = document.querySelectorAll(".hotspot");
+        hotspots.forEach((h) => scene.removeChild(h));
       }
 
       function renderHotspots(panoId) {
-        const scene = document.querySelector('a-scene');
-        panoramas[panoId].hotspots.forEach(hotspot => {
-          const entity = document.createElement('a-sphere');
-          entity.classList.add('hotspot');
-          entity.setAttribute('position', hotspot.position);
-          entity.setAttribute('radius', '0.3');
-          entity.setAttribute('color', '#FF0000');
-          entity.setAttribute('onclick', `loadPanorama('${hotspot.target}')`);
+        const scene = document.querySelector("a-scene");
+
+        panoramas[panoId].hotspots.forEach((hotspot) => {
+          const entity = document.createElement("a-sphere");
+          entity.classList.add("hotspot");
+          entity.setAttribute("position", hotspot.position);
+          entity.setAttribute("radius", "0.3");
+          entity.setAttribute("color", "#FF0000");
+
+          // Clique no hotspot troca para o panorama alvo
+          entity.addEventListener("click", () => {
+            loadPanorama(hotspot.target);
+          });
+
           scene.appendChild(entity);
         });
       }
 
       function updateHotspotTargets() {
-        const select = document.getElementById('hotspotTarget');
-        select.innerHTML = '';
-        Object.keys(panoramas).forEach(id => {
+        const select = document.getElementById("hotspotTarget");
+        select.innerHTML = "";
+
+        const panoIds = Object.keys(panoramas);
+
+        // Se ainda não tem pelo menos 2 panoramas, não há alvo possível
+        if (panoIds.length < 2 || !currentPanorama) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = panoIds.length < 2
+            ? "Adicione pelo menos 2 panoramas..."
+            : "Selecione um panorama alvo...";
+          select.appendChild(option);
+          select.disabled = true;
+          return;
+        }
+
+        select.disabled = false;
+
+        panoIds.forEach((id) => {
           if (id !== currentPanorama) {
-            const option = document.createElement('option');
+            const option = document.createElement("option");
             option.value = id;
             option.textContent = id;
             select.appendChild(option);
           }
         });
+
+        // Se por algum motivo não sobrou opção (ex: só 1 panorama), desabilita
+        if (!select.firstChild) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "Nenhum alvo disponível";
+          select.appendChild(option);
+          select.disabled = true;
+        }
       }
 
       function toggleEditMode() {
         editMode = !editMode;
-        document.getElementById('editorPanel').classList.toggle('hidden');
+
+        // Não escondemos o painel; só escondemos elementos com class "edit-only"
+        const panel = document.getElementById("editorPanel");
+        panel.classList.toggle("view-mode", !editMode);
       }
 
       function finalizeTour() {
-        const tourData = JSON.stringify(panoramas);
-        const blob = new Blob([tourData], {type: 'application/json'});
+        // Finaliza exportando o JSON (mantém widgets principais sempre visíveis)
+        const tourData = JSON.stringify(panoramas, null, 2);
+        const blob = new Blob([tourData], { type: "application/json" });
         const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
+
+        const a = document.createElement("a");
         a.href = url;
-        a.download = 'virtual_tour.json';
+        a.download = "virtual_tour.json";
         a.click();
-        
-        toggleEditMode();
+
+        URL.revokeObjectURL(url);
+
+        // Opcional: entrar automaticamente em "view mode" depois de finalizar
+        // (widgets principais continuam visíveis)
+        if (editMode) toggleEditMode();
       }
+
+      // Inicializa dropdown corretamente ao abrir
+      updateHotspotTargets();
     </script>
   </body>
 </html>
