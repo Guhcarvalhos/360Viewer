@@ -15,7 +15,7 @@
         background: rgba(255,255,255,0.92);
         padding: 15px;
         border-radius: 10px;
-        width: 360px;
+        width: 380px;
         max-width: calc(100vw - 40px);
         box-shadow: 0 10px 30px rgba(0,0,0,0.18);
       }
@@ -29,9 +29,18 @@
         box-sizing: border-box;
       }
 
-      .hint { font-size: 12px; opacity: 0.8; margin-top: 8px; line-height: 1.35; }
-      .status { font-size: 12px; margin-top: 6px; opacity: 0.95; }
       .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .hint { font-size: 12px; opacity: 0.82; margin-top: 8px; line-height: 1.35; }
+      .status { font-size: 12px; margin-top: 6px; opacity: 0.95; }
+
+      .pill {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(0,0,0,0.06);
+        font-size: 12px;
+        margin-top: 6px;
+      }
     </style>
   </head>
 
@@ -46,51 +55,69 @@
       </div>
 
       <select id="hotspotTarget"></select>
-      <button onclick="addHotspot()">Add Hotspot (center view)</button>
+
+      <div class="row">
+        <button onclick="armHotspotPlacement()">Place Hotspot (center cursor)</button>
+        <button onclick="cancelHotspotPlacement()">Cancel</button>
+      </div>
 
       <button onclick="finalizeTour()" class="edit-only">Finalize Tour (Export JSON)</button>
 
+      <div id="placementState" class="pill" style="display:none;">Placement mode: ON</div>
       <div id="status" class="status"></div>
+
       <div class="hint">
-        Fluxo: adicione 2+ panoramas → selecione o alvo no dropdown (ele auto-seleciona) →
-        olhe para onde quer o hotspot → clique “Add Hotspot” → clique na bolinha para abrir o panorama alvo.<br/>
-        <b>Fix aplicado:</b> o raycaster agora só “enxerga” hotspots (o sky não bloqueia o clique).
+        Fluxo: adicione 2+ panoramas → selecione o alvo no dropdown → clique <b>Place Hotspot</b> →
+        aponte o cursor (centro) para onde quer → clique/toque para fixar → clique no hotspot para trocar.
+        <br/><b>Transição:</b> crossfade mais rápida (estilo Street View).
       </div>
     </div>
 
     <a-scene id="scene">
       <a-assets id="assets"></a-assets>
 
-      <!-- Panorama -->
-      <a-sky id="panorama"></a-sky>
+      <!-- DOIS SKIES para crossfade -->
+      <a-sky id="skyA" material="transparent: true; opacity: 1" visible="true"></a-sky>
+      <a-sky id="skyB" material="transparent: true; opacity: 0" visible="true"></a-sky>
 
       <!-- Camada de hotspots -->
       <a-entity id="hotspotLayer"></a-entity>
 
-      <!-- Camera -->
+      <!-- Camera + cursor central -->
       <a-camera id="cam" look-controls="reverseMouseDrag: true">
-        <!-- Cursor com rayOrigin mouse = clique do mouse funciona no desktop.
-             IMPORTANTÍSSIMO: raycaster aponta SOMENTE para .hotspot,
-             assim o sky não "rouba" a interseção do raio. -->
-        <a-entity
-          id="mouseCursor"
-          cursor="rayOrigin: mouse"
-          raycaster="objects: .hotspot; far: 100"
-          position="0 0 -0.1"
-          geometry="primitive: ring; radiusInner: 0.008; radiusOuter: 0.012"
-          material="color: #FF0000; shader: flat; opacity: 0.9">
-        </a-entity>
+        <a-cursor
+          id="cursor"
+          fuse="false"
+          raycaster="objects: .hotspot, #skyA, #skyB; far: 100"
+          material="color: #FF0000; shader: flat; opacity: 0.9"
+          geometry="primitive: ring; radiusInner: 0.01; radiusOuter: 0.015">
+        </a-cursor>
       </a-camera>
     </a-scene>
 
     <script>
+      // ---------- STATE ----------
       let panoramas = {};
       let currentPanorama = null;
       let editMode = true;
 
+      // Crossfade state
+      let activeSky = "A"; // "A" or "B"
+      const FADE_MS = 250; // <<< TRANSIÇÃO MAIS RÁPIDA
+
+      // Placement mode
+      let placingHotspot = false;
+
       const statusEl = document.getElementById("status");
+      const placementPill = document.getElementById("placementState");
+      const cursorEl = document.getElementById("cursor");
+      const hotspotLayer = document.getElementById("hotspotLayer");
+      const skyA = document.getElementById("skyA");
+      const skyB = document.getElementById("skyB");
+
       function setStatus(msg) { statusEl.textContent = msg || ""; }
 
+      // ---------- PANORAMAS ----------
       function addPanorama() {
         if (!editMode) return;
 
@@ -103,125 +130,76 @@
           const id = "pano_" + Object.keys(panoramas).length;
           panoramas[id] = { src: e.target.result, hotspots: [] };
 
-          // Carrega o primeiro automaticamente
           if (!currentPanorama) {
-            loadPanorama(id);
+            loadPanorama(id, /*withTransition*/ false);
           } else {
-            // Mantém dropdown atualizado mesmo sem trocar panorama
             updateHotspotTargets();
           }
 
-          // Permite re-upload do mesmo arquivo
           input.value = "";
           setStatus(`Panorama adicionado: ${id}`);
         };
         reader.readAsDataURL(file);
       }
 
-      function loadPanorama(id) {
+      function loadPanorama(id, withTransition = true) {
         if (!panoramas[id]) return;
-
         currentPanorama = id;
-        document.getElementById("panorama").setAttribute("src", panoramas[id].src);
 
         renderHotspots(id);
         updateHotspotTargets();
 
+        if (withTransition) {
+          crossfadeTo(panoramas[id].src);
+        } else {
+          if (activeSky === "A") {
+            skyA.setAttribute("src", panoramas[id].src);
+            skyA.setAttribute("material", "opacity", 1);
+            skyB.setAttribute("material", "opacity", 0);
+          } else {
+            skyB.setAttribute("src", panoramas[id].src);
+            skyB.setAttribute("material", "opacity", 1);
+            skyA.setAttribute("material", "opacity", 0);
+          }
+        }
+
         setStatus(`Panorama atual: ${id}`);
       }
 
-      function addHotspot() {
-        if (!editMode) return;
+      // Crossfade rápido (Street View-like)
+      function crossfadeTo(src) {
+        const fromSky = activeSky === "A" ? skyA : skyB;
+        const toSky   = activeSky === "A" ? skyB : skyA;
 
-        if (!currentPanorama) {
-          setStatus("Carregue um panorama antes de criar hotspots.");
-          return;
-        }
+        toSky.setAttribute("src", src);
+        toSky.setAttribute("material", "opacity", 0);
 
-        const select = document.getElementById("hotspotTarget");
-        const target = select.value;
+        fromSky.removeAttribute("animation__fadeout");
+        toSky.removeAttribute("animation__fadein");
 
-        if (!target) {
-          setStatus("Não há alvo selecionado. Adicione 2+ panoramas para habilitar o dropdown.");
-          return;
-        }
-
-        const camera = document.getElementById("cam");
-        const rotation = camera.getAttribute("rotation");
-
-        // Coloca hotspot “na frente” do utilizador, numa esfera de raio ~9.5
-        const position = calculatePositionFromCamera(rotation, 9.5);
-
-        panoramas[currentPanorama].hotspots.push({ position, target });
-
-        renderHotspots(currentPanorama);
-        setStatus(`Hotspot criado (vai para ${target}). Agora clique na bolinha vermelha.`);
-      }
-
-      // Cálculo estável para posicionar na direção do olhar
-      function calculatePositionFromCamera(rotation, radius) {
-        // yaw (Y) e pitch (X)
-        const yaw = (rotation.y + 90) * Math.PI / 180;
-        const pitch = (-rotation.x) * Math.PI / 180;
-
-        const x = -radius * Math.cos(pitch) * Math.cos(yaw);
-        const y =  radius * Math.sin(pitch);
-        const z = -radius * Math.cos(pitch) * Math.sin(yaw);
-
-        return { x, y, z };
-      }
-
-      function renderHotspots(panoId) {
-        const layer = document.getElementById("hotspotLayer");
-        layer.innerHTML = "";
-
-        const hs = panoramas[panoId]?.hotspots || [];
-
-        hs.forEach((hotspot, idx) => {
-          const entity = document.createElement("a-sphere");
-
-          // CLASSES IMPORTANTES:
-          // - hotspot: para styling/seleção
-          // - .hotspot é o alvo do raycaster (objects: .hotspot)
-          entity.classList.add("hotspot");
-
-          entity.setAttribute("position", hotspot.position);
-          entity.setAttribute("radius", "0.35");
-
-          // Material emissivo ajuda a ver bem e “pegar” clique
-          entity.setAttribute("material",
-            "shader: standard; color: #FF0000; emissive: #FF0000; emissiveIntensity: 0.75; metalness: 0.0; roughness: 0.6;"
-          );
-
-          // Garante que o raycaster detecte o objeto corretamente
-          entity.setAttribute("visible", "true");
-
-          // Clique abre o panorama alvo
-          entity.addEventListener("click", (ev) => {
-            // Algumas vezes o clique não dispara se o raycaster não intersectar.
-            // Como o raycaster agora só pega .hotspot, isso fica consistente.
-            if (hotspot.target && panoramas[hotspot.target]) {
-              loadPanorama(hotspot.target);
-              setStatus(`Abriu: ${hotspot.target}`);
-            } else {
-              setStatus("Hotspot sem alvo válido.");
-            }
-          });
-
-          layer.appendChild(entity);
+        fromSky.setAttribute("animation__fadeout", {
+          property: "material.opacity",
+          to: 0,
+          dur: FADE_MS,
+          easing: "linear"
         });
 
-        // Opcional: feedback
-        if (hs.length === 0) setStatus(`Panorama ${panoId} sem hotspots ainda.`);
+        toSky.setAttribute("animation__fadein", {
+          property: "material.opacity",
+          to: 1,
+          dur: FADE_MS,
+          easing: "linear"
+        });
+
+        activeSky = activeSky === "A" ? "B" : "A";
       }
 
+      // ---------- HOTSPOT TARGETS ----------
       function updateHotspotTargets() {
         const select = document.getElementById("hotspotTarget");
         select.innerHTML = "";
 
         const ids = Object.keys(panoramas);
-
-        // Sem 2 panoramas, não tem alvo para hotspot
         if (!currentPanorama || ids.length < 2) {
           const opt = document.createElement("option");
           opt.value = "";
@@ -235,7 +213,6 @@
 
         select.disabled = false;
 
-        // Adiciona opções (exceto o atual)
         ids.forEach((id) => {
           if (id !== currentPanorama) {
             const opt = document.createElement("option");
@@ -245,23 +222,105 @@
           }
         });
 
-        // FIX #1: garantir que sempre exista um alvo selecionado automaticamente
-        // (se tiver pelo menos 1 opção)
-        if (select.options.length > 0) {
-          select.selectedIndex = 0;
-        } else {
-          // Caso raro: só existe o panorama atual
-          const opt = document.createElement("option");
-          opt.value = "";
-          opt.textContent = "Nenhum alvo disponível";
-          select.appendChild(opt);
-          select.disabled = true;
-        }
+        if (select.options.length > 0) select.selectedIndex = 0;
       }
 
+      // ---------- HOTSPOT PLACEMENT (center cursor) ----------
+      function armHotspotPlacement() {
+        if (!editMode) return;
+        if (!currentPanorama) { setStatus("Carregue um panorama antes."); return; }
+
+        const target = document.getElementById("hotspotTarget").value;
+        if (!target) { setStatus("Selecione um panorama alvo no dropdown."); return; }
+
+        placingHotspot = true;
+        placementPill.style.display = "inline-block";
+        setStatus("Placement mode ON: aponte o cursor no centro e clique/toque para fixar o hotspot.");
+      }
+
+      function cancelHotspotPlacement() {
+        placingHotspot = false;
+        placementPill.style.display = "none";
+        setStatus("Placement mode OFF.");
+      }
+
+      function handleSceneClick() {
+        if (!placingHotspot) return;
+        if (!currentPanorama) return;
+
+        const select = document.getElementById("hotspotTarget");
+        const target = select.value;
+        if (!target) { setStatus("Sem alvo selecionado."); return; }
+
+        const intersection = getCursorIntersectionWithActiveSky();
+        if (!intersection) {
+          setStatus("Não consegui obter ponto no panorama. Aponte o cursor para o céu e tente novamente.");
+          return;
+        }
+
+        const localPos = worldToLocal(hotspotLayer, intersection.point);
+
+        panoramas[currentPanorama].hotspots.push({
+          position: { x: localPos.x, y: localPos.y, z: localPos.z },
+          target
+        });
+
+        renderHotspots(currentPanorama);
+
+        placingHotspot = false;
+        placementPill.style.display = "none";
+        setStatus(`Hotspot fixado. Clique na bolinha para abrir ${target}.`);
+      }
+
+      function getCursorIntersectionWithActiveSky() {
+        const ray = cursorEl.components.raycaster;
+        if (!ray) return null;
+
+        const sky = (activeSky === "A") ? skyA : skyB;
+        return ray.getIntersection(sky.object3D) || null;
+      }
+
+      function worldToLocal(entityEl, worldPoint) {
+        const p = worldPoint.clone(); // THREE.Vector3
+        entityEl.object3D.worldToLocal(p);
+        return p;
+      }
+
+      // ---------- HOTSPOTS RENDER ----------
+      function renderHotspots(panoId) {
+        hotspotLayer.innerHTML = "";
+        const hs = panoramas[panoId]?.hotspots || [];
+
+        hs.forEach((hotspot) => {
+          const entity = document.createElement("a-sphere");
+          entity.classList.add("hotspot");
+
+          entity.setAttribute("position", hotspot.position);
+          entity.setAttribute("radius", "0.35");
+          entity.setAttribute("material",
+            "shader: standard; color: #FF0000; emissive: #FF0000; emissiveIntensity: 0.75; metalness: 0.0; roughness: 0.6;"
+          );
+
+          entity.addEventListener("click", () => {
+            if (hotspot.target && panoramas[hotspot.target]) {
+              loadPanorama(hotspot.target, true);
+              setStatus(`Abriu: ${hotspot.target}`);
+            } else {
+              setStatus("Hotspot sem alvo válido.");
+            }
+          });
+
+          hotspotLayer.appendChild(entity);
+        });
+      }
+
+      // ---------- UI / EXPORT ----------
       function toggleEditMode() {
         editMode = !editMode;
         document.getElementById("editorPanel").classList.toggle("view-mode", !editMode);
+
+        if (!editMode) cancelHotspotPlacement();
+
         setStatus(editMode ? "Modo edição ON" : "Modo edição OFF");
       }
 
@@ -280,7 +339,10 @@
         if (editMode) toggleEditMode();
       }
 
-      // Inicialização
+      // ---------- EVENTS ----------
+      document.querySelector("a-scene").addEventListener("click", handleSceneClick);
+      document.querySelector("a-scene").addEventListener("touchend", handleSceneClick);
+
       updateHotspotTargets();
       setStatus("Pronto. Adicione panoramas para começar.");
     </script>
